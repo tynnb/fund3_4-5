@@ -116,3 +116,27 @@ int pop_heap(Heap *h) {
     }
     return root;
 }
+
+int remove_letter_from_heap(Heap *heap, int letter_id) {
+    if (!heap) {
+        return 0;
+    }
+    
+    Heap temp_heap = create_heap(heap->capacity);
+    int found = 0;
+    
+    while (!is_empty_heap(heap)) {
+        int current_id = pop_heap(heap);
+        if (current_id == letter_id) {
+            found = 1;
+        } else {
+            push_heap(&temp_heap, current_id);
+        }
+    }
+    
+    while (!is_empty_heap(&temp_heap)) {
+        push_heap(heap, pop_heap(&temp_heap));
+    }
+    delete_heap(&temp_heap);
+    return found;
+}

@@ -23,5 +23,6 @@ size_t size_heap(const Heap *h);
 int peek_heap(const Heap *h);
 void push_heap(Heap *h, int value);
 int pop_heap(Heap *h);
+int remove_letter_from_heap(Heap *heap, int letter_id);
 
 #endif
