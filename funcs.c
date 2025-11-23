@@ -140,3 +140,157 @@ int remove_letter_from_heap(Heap *heap, int letter_id) {
     delete_heap(&temp_heap);
     return found;
 }
+
+PostOffice* find_office(const MailSystem *system, int office_id) {
+    if (!system) {
+        return NULL;
+    }
+
+    PostOffice *current = system->offices;
+    while (current) {
+        if (current->id == office_id) {
+            return current;
+        }
+        current = current->next;
+    }
+    return NULL;
+}
+
+StatusCode add_office(MailSystem *system, int id, int capacity, int* connections, int num_conn) {
+    if (!system || id < 0 || capacity <= 0) {
+        return ERROR_INVALID_ID;
+    }
+    if (find_office(system, id)) {
+        return ERROR_DUPLICATE_OFFICE;
+    }
+
+    PostOffice *new_office = (PostOffice*)malloc(sizeof(PostOffice));
+    if (!new_office) {
+        return ERROR_MEMORY_ALLOCATION;
+    }
+    
+    new_office->id = id;
+    new_office->capacity = capacity;
+    new_office->current_letters = 0;
+    new_office->num_connections = 0;
+    new_office->letter_heap = create_heap(INITIAL_CAPACITY);
+    new_office->next = system->offices;
+    system->offices = new_office;
+    
+    if (num_conn > 0) {
+        new_office->connections = (int*)malloc(num_conn * sizeof(int));
+        if (!new_office->connections) {
+            delete_heap(&new_office->letter_heap);
+            free(new_office);
+            return ERROR_MEMORY_ALLOCATION;
+        }
+        
+        for (int i = 0; i < num_conn; i++) {
+            new_office->connections[i] = connections[i];
+            new_office->num_connections++;
+            
+            PostOffice *target_office = find_office(system, connections[i]);
+            if (target_office && target_office->num_connections < MAX_CONNECTIONS) {
+                int connection_exists = 0;
+                for (int j = 0; j < target_office->num_connections; j++) {
+                    if (target_office->connections[j] == id) {
+                        connection_exists = 1;
+                        break;
+                    }
+                }
+                
+                if (!connection_exists) {
+                    if (!target_office->connections) {
+                        target_office->connections = (int*)malloc(MAX_CONNECTIONS * sizeof(int));
+                    }
+                    target_office->connections[target_office->num_connections++] = id;
+                }
+            }
+        }
+    } else {
+        new_office->connections = NULL;
+    }
+    
+    char log_msg[256];
+    sprintf(log_msg, "Added office %d with capacity %d", id, capacity);
+    log_message(system, log_msg);
+    return SUCCESS;
+}
+
+StatusCode remove_office(MailSystem *system, int office_id) {
+    if (!system) {
+        return ERROR_INVALID_ID;
+    }
+    
+    PostOffice **prev = &system->offices;
+    PostOffice *current = system->offices;
+    
+    while (current) {
+        if (current->id == office_id) {
+            while (!is_empty_heap(&current->letter_heap)) {
+                int letter_id = pop_heap(&current->letter_heap);
+                Letter *letter = find_letter(system, letter_id);
+                if (letter) {
+                    if (letter->from_office == office_id || letter->to_office == office_id) {
+                        letter->state = UNDELIVERED;
+                        char log_msg[256];
+                        sprintf(log_msg, "Letter %d marked as undeliverable (office %d removed)", letter_id, office_id);
+                        log_message(system, log_msg);
+                    } else {
+                        int transferred = 0;
+                        for (int i = 0; i < current->num_connections && !transferred; i++) {
+                            int target_id = current->connections[i];
+                            if (transfer_letter_to_office(system, letter_id, office_id, target_id) == SUCCESS) {
+                                transferred = 1;
+                            }
+                        }
+                        if (!transferred) {
+                            letter->state = UNDELIVERED;
+                            char log_msg[256];
+                            sprintf(log_msg, "Letter %d marked as undeliverable (no route after office removal)", letter_id);
+                            log_message(system, log_msg);
+                        }
+                    }
+                }
+            }
+            PostOffice *other_office = system->offices;
+            while (other_office) {
+                if (other_office->id != office_id) {
+                    for (int i = 0; i < other_office->num_connections; i++) {
+                        if (other_office->connections[i] == office_id) {
+                            for (int j = i; j < other_office->num_connections - 1; j++) {
+                                other_office->connections[j] = other_office->connections[j + 1];
+                            }
+                            other_office->num_connections--;
+                            
+                            if (other_office->num_connections > 0) {
+                                int *new_connections = (int*)realloc(other_office->connections, other_office->num_connections * sizeof(int));
+                                if (new_connections) {
+                                    other_office->connections = new_connections;
+                                }
+                            } else {
+                                free(other_office->connections);
+                                other_office->connections = NULL;
+                            }
+                            break;
+                        }
+                    }
+                }
+                other_office = other_office->next;
+            }
+
+            *prev = current->next;
+            delete_heap(&current->letter_heap);
+            free(current->connections);
+            free(current);
+            
+            char log_msg[256];
+            sprintf(log_msg, "Removed office %d", office_id);
+            log_message(system, log_msg);
+            return SUCCESS;
+        }
+        prev = &current->next;
+        current = current->next;
+    }
+    return ERROR_OFFICE_NOT_FOUND;
+}
