@@ -81,4 +81,10 @@ PostOffice* find_office(const MailSystem *system, int office_id);
 StatusCode add_office(MailSystem *system, int id, int capacity, int* connections, int num_conn);
 StatusCode remove_office(MailSystem *system, int office_id);
 
+Letter* find_letter(MailSystem *system, int letter_id);
+StatusCode add_letter(MailSystem *system, LetterType type, int priority, int from_office, int to_office, const char* tech_data);
+StatusCode transfer_letter_to_office(MailSystem *system, int letter_id, int from_office_id, int to_office_id);
+void process_letters_transfer(MailSystem *system);
+void transfer_priority_letters(MailSystem *system);
+
 #endif

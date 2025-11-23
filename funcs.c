@@ -294,3 +294,360 @@ StatusCode remove_office(MailSystem *system, int office_id) {
     }
     return ERROR_OFFICE_NOT_FOUND;
 }
+
+Letter* find_letter(MailSystem *system, int letter_id) {
+    if (!system) {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < system->letters_size; i++) {
+        if (system->letters[i].id == letter_id) {
+            return &system->letters[i];
+        }
+    }
+    return NULL;
+}
+
+StatusCode add_letter(MailSystem *system, LetterType type, int priority, int from_office, int to_office, const char* tech_data) {
+    if (!system || priority < 0 || !tech_data) {
+        return ERROR_INVALID_PARAMETER;
+    }
+    
+    PostOffice *from_office_ptr = find_office(system, from_office);
+    PostOffice *to_office_ptr = find_office(system, to_office);
+    if (!from_office_ptr || !to_office_ptr) {
+        return ERROR_OFFICE_NOT_FOUND;
+    }
+
+    int connection_exists = 0;
+    for (int i = 0; i < from_office_ptr->num_connections; i++) {
+        if (from_office_ptr->connections[i] == to_office) {
+            connection_exists = 1;
+            break;
+        }
+    }
+    
+    if (!connection_exists) {
+        if (from_office_ptr->num_connections < MAX_CONNECTIONS) {
+            if (!from_office_ptr->connections) {
+                from_office_ptr->connections = (int*)malloc(MAX_CONNECTIONS * sizeof(int));
+            }
+            from_office_ptr->connections[from_office_ptr->num_connections++] = to_office;
+            
+            char log_msg[256];
+            sprintf(log_msg, "Auto-created connection: office %d -> office %d", from_office, to_office);
+            log_message(system, log_msg);
+        }
+        
+        if (to_office_ptr->num_connections < MAX_CONNECTIONS) {
+            int reverse_connection_exists = 0;
+            for (int i = 0; i < to_office_ptr->num_connections; i++) {
+                if (to_office_ptr->connections[i] == from_office) {
+                    reverse_connection_exists = 1;
+                    break;
+                }
+            }
+            
+            if (!reverse_connection_exists) {
+                if (!to_office_ptr->connections) {
+                    to_office_ptr->connections = (int*)malloc(MAX_CONNECTIONS * sizeof(int));
+                }
+                to_office_ptr->connections[to_office_ptr->num_connections++] = from_office;
+                
+                char log_msg[256];
+                sprintf(log_msg, "Auto-created connection: office %d -> office %d", to_office, from_office);
+                log_message(system, log_msg);
+            }
+        }
+    }
+
+    if (system->letters_size >= system->letters_capacity) {
+        size_t new_capacity = system->letters_capacity == 0 ? 10 : system->letters_capacity * 2;
+        Letter *new_letters = (Letter*)realloc(system->letters, new_capacity * sizeof(Letter));
+        if (!new_letters) {
+            return ERROR_MEMORY_ALLOCATION;
+        }
+        system->letters = new_letters;
+        system->letters_capacity = new_capacity;
+    }
+    
+    Letter *new_letter = &system->letters[system->letters_size];
+    new_letter->id = system->next_letter_id++;
+    new_letter->type = type;
+    new_letter->state = IN_TRANSIT;
+    new_letter->priority = priority;
+    new_letter->from_office = from_office;
+    new_letter->to_office = to_office;
+    new_letter->current_office = from_office;
+    strncpy(new_letter->tech_data, tech_data, sizeof(new_letter->tech_data) - 1);
+    new_letter->tech_data[sizeof(new_letter->tech_data) - 1] = '\0';
+    
+    if (from_office_ptr->current_letters >= from_office_ptr->capacity) {
+        return ERROR_OFFICE_FULL;
+    }
+    
+    push_heap(&from_office_ptr->letter_heap, new_letter->id);
+    from_office_ptr->current_letters++;
+    system->letters_size++;
+    
+    char log_msg[256];
+    sprintf(log_msg, "Added letter %d from office %d to office %d", new_letter->id, from_office, to_office);
+    log_message(system, log_msg);
+    return SUCCESS;
+}
+
+StatusCode transfer_letter_to_office(MailSystem *system, int letter_id, int from_office_id, int to_office_id) {
+    if (!system) {
+        return ERROR_INVALID_PARAMETER;
+    }
+    
+    PostOffice *from_office = find_office(system, from_office_id);
+    PostOffice *target_office = find_office(system, to_office_id);
+    if (!target_office) {
+        return ERROR_OFFICE_NOT_FOUND;
+    }
+    
+    if (target_office->current_letters >= target_office->capacity) {
+        return ERROR_OFFICE_FULL;
+    }
+    
+    if (from_office && remove_letter_from_heap(&from_office->letter_heap, letter_id)) {
+        from_office->current_letters--;
+    }
+    
+    push_heap(&target_office->letter_heap, letter_id);
+    target_office->current_letters++;
+    
+    Letter *letter = find_letter(system, letter_id);
+    if (letter) {
+        letter->current_office = to_office_id;
+    }
+    
+    char log_msg[256];
+    sprintf(log_msg, "Letter %d transferred from office %d to office %d", letter_id, from_office_id, to_office_id);
+    log_message(system, log_msg);
+    return SUCCESS;
+}
+
+void process_letters_transfer(MailSystem *system) {
+    if (!system) {
+        return;
+    }
+    
+    PostOffice *office = system->offices;
+    while (office) {
+        Heap temp_heap = create_heap(office->letter_heap.capacity);
+        int *letter_ids = NULL;
+        int *letter_priorities = NULL;
+        size_t count = 0;
+        
+        while (!is_empty_heap(&office->letter_heap)) {
+            int letter_id = pop_heap(&office->letter_heap);
+            Letter *letter = find_letter(system, letter_id);
+            
+            if (letter) {
+                int *temp_ids = realloc(letter_ids, (count + 1) * sizeof(int));
+                if (!temp_ids) {
+                    free(letter_priorities);
+                    free(letter_ids);
+                    return;
+                }
+                letter_ids = temp_ids;
+                int *temp_priorities = realloc(letter_priorities, (count + 1) * sizeof(int));
+                if (!temp_priorities) {
+                    free(letter_ids);
+                    free(letter_priorities);
+                    return;
+                }
+                letter_priorities = temp_priorities;
+                letter_ids[count] = letter_id;
+                letter_priorities[count] = letter->priority;
+                count++;
+            }
+            push_heap(&temp_heap, letter_id);
+        }
+
+        while (!is_empty_heap(&temp_heap)) {
+            push_heap(&office->letter_heap, pop_heap(&temp_heap));
+        }
+        delete_heap(&temp_heap);
+        sort_by_priority(letter_ids, letter_priorities, NULL, count);
+        for (size_t i = 0; i < count; i++) {
+            int letter_id = letter_ids[i];
+            Letter *letter = find_letter(system, letter_id);
+            
+            if (!letter || letter->state != IN_TRANSIT) {
+                continue;
+            }
+            if (!remove_letter_from_heap(&office->letter_heap, letter_id)) {
+                continue;
+            }
+            office->current_letters--;
+            
+            if (letter->to_office == office->id) {
+                letter->state = DELIVERED;
+                push_heap(&office->letter_heap, letter_id);
+                office->current_letters++;
+                
+                char log_msg[256];
+                sprintf(log_msg, "Letter %d delivered to office %d", letter_id, office->id);
+                log_message(system, log_msg);
+            } else {
+                int transferred = 0;
+                
+                PostOffice *target_office = find_office(system, letter->to_office);
+                if (target_office && target_office->current_letters < target_office->capacity) {
+                    if (transfer_letter_to_office(system, letter_id, office->id, letter->to_office) == SUCCESS) {
+                        transferred = 1;
+                    }
+                }
+
+                if (!transferred && office->num_connections > 0) {
+                    for (int j = 0; j < office->num_connections && !transferred; j++) {
+                        int next_office_id = office->connections[j];
+                        PostOffice *next_office = find_office(system, next_office_id);
+                        
+                        if (next_office && next_office->current_letters < next_office->capacity) {
+                            if (transfer_letter_to_office(system, letter_id, office->id, next_office_id) == SUCCESS) {
+                                transferred = 1;
+                            }
+                        }
+                    }
+                }
+                if (!transferred) {
+                    push_heap(&office->letter_heap, letter_id);
+                    office->current_letters++;
+                }
+            }
+            break;
+        }
+        free(letter_ids);
+        free(letter_priorities);
+        office = office->next;
+    }
+}
+
+void transfer_priority_letters(MailSystem *system) {
+    if (!system) {
+        return;
+    }
+
+    int total_letters = 0;
+    int max_letters = system->letters_size * 2;
+    int *all_letter_ids = malloc(max_letters * sizeof(int));
+    int *all_letter_priorities = malloc(max_letters * sizeof(int));
+    PostOffice **letter_offices = malloc(max_letters * sizeof(PostOffice*));
+    
+    if (!all_letter_ids || !all_letter_priorities || !letter_offices) {
+        free(all_letter_ids);
+        free(all_letter_priorities);
+        free(letter_offices);
+        return;
+    }
+
+    PostOffice *office = system->offices;
+    while (office) {
+        Heap temp_heap = create_heap(office->letter_heap.capacity);
+
+        while (!is_empty_heap(&office->letter_heap)) {
+            int letter_id = pop_heap(&office->letter_heap);
+            Letter *letter = find_letter(system, letter_id);
+            
+            if (letter && letter->state == IN_TRANSIT) {
+                all_letter_ids[total_letters] = letter_id;
+                all_letter_priorities[total_letters] = letter->priority;
+                letter_offices[total_letters] = office;
+                total_letters++;
+            }
+            push_heap(&temp_heap, letter_id);
+        }
+
+        while (!is_empty_heap(&temp_heap)) {
+            push_heap(&office->letter_heap, pop_heap(&temp_heap));
+        }
+        delete_heap(&temp_heap);
+        office = office->next;
+    }
+
+    sort_by_priority(all_letter_ids, all_letter_priorities, letter_offices, total_letters);
+    int letters_processed = 0;
+    int max_to_process = 1;
+    
+    for (int i = 0; i < total_letters && letters_processed < max_to_process; i++) {
+        int letter_id = all_letter_ids[i];
+        PostOffice *current_office = letter_offices[i];
+        Letter *letter = find_letter(system, letter_id);
+        
+        if (!letter || letter->state != IN_TRANSIT) {
+            continue;
+        }
+        if (!remove_letter_from_heap(&current_office->letter_heap, letter_id)) {
+            continue;
+        }
+
+        if (letter->to_office == current_office->id) {
+            letter->state = DELIVERED;
+            current_office->current_letters--;
+            
+            char log_msg[256];
+            sprintf(log_msg, "Letter %d delivered to office %d (priority: %d)", letter->id, current_office->id, letter->priority);
+            log_message(system, log_msg);
+            letters_processed++;
+            continue;
+        }
+
+        PostOffice *best_next_office = NULL;
+        int best_score = -1;
+
+        PostOffice *target_office = find_office(system, letter->to_office);
+        if (target_office && target_office->current_letters < target_office->capacity) {
+            best_next_office = target_office;
+            best_score = 1000;
+        }
+
+        if (!best_next_office) {
+            for (int j = 0; j < current_office->num_connections; j++) {
+                int next_office_id = current_office->connections[j];
+                PostOffice *next_office = find_office(system, next_office_id);
+                
+                if (next_office && next_office->current_letters < next_office->capacity) {
+                    int score = 0;
+
+                    for (int k = 0; k < next_office->num_connections; k++) {
+                        if (next_office->connections[k] == letter->to_office) {
+                            score += 100;
+                            break;
+                        }
+                    }
+
+                    int distance = abs(next_office->id - letter->to_office);
+                    score += (10 - distance);
+
+                    int free_capacity = next_office->capacity - next_office->current_letters;
+                    score += free_capacity;
+                    
+                    if (score > best_score) {
+                        best_score = score;
+                        best_next_office = next_office;
+                    }
+                }
+            }
+        }
+
+        if (best_next_office) {
+            push_heap(&best_next_office->letter_heap, letter_id);
+            best_next_office->current_letters++;
+            letter->current_office = best_next_office->id;
+            
+            char log_msg[256];
+            sprintf(log_msg, "Letter %d transferred from %d to %d (priority: %d)", letter->id, current_office->id, best_next_office->id, letter->priority);
+            log_message(system, log_msg);
+            letters_processed++;
+        } else {
+            push_heap(&current_office->letter_heap, letter_id);
+        }
+    }
+    free(all_letter_ids);
+    free(all_letter_priorities);
+    free(letter_offices);
+}
