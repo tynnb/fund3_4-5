@@ -87,4 +87,10 @@ StatusCode transfer_letter_to_office(MailSystem *system, int letter_id, int from
 void process_letters_transfer(MailSystem *system);
 void transfer_priority_letters(MailSystem *system);
 
+void init_system(MailSystem *system);
+void cleanup_system(MailSystem *system);
+void log_message(MailSystem *system, const char* message);
+void open_log_file(MailSystem *system, const char* filename);
+StatusCode save_letters_to_file(MailSystem *system, const char* filename);
+
 #endif

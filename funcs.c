@@ -651,3 +651,105 @@ void transfer_priority_letters(MailSystem *system) {
     free(all_letter_priorities);
     free(letter_offices);
 }
+
+void init_system(MailSystem *system) {
+    if (!system) {
+        return;
+    }
+
+    system->offices = NULL;
+    system->letters = NULL;
+    system->letters_size = 0;
+    system->letters_capacity = 0;
+    system->next_letter_id = 1;
+    system->log_file = NULL;
+}
+
+void cleanup_system(MailSystem *system) {
+    if (!system) {
+        return;
+    }
+
+    PostOffice *current_office = system->offices;
+    while (current_office) {
+        PostOffice *next = current_office->next;
+        delete_heap(&current_office->letter_heap);
+        free(current_office->connections);
+        free(current_office);
+        current_office = next;
+    }
+    system->offices = NULL;
+    
+    free(system->letters);
+    system->letters = NULL;
+    system->letters_size = 0;
+    system->letters_capacity = 0;
+    if (system->log_file) {
+        fclose(system->log_file);
+        system->log_file = NULL;
+    }
+}
+
+void log_message(MailSystem *system, const char* message) {
+    if (!system || !message) {
+        return;
+    }
+
+    time_t now = time(NULL);
+    char time_str[64];
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
+    printf("[%s] %s\n", time_str, message);
+    if (system->log_file) {
+        fprintf(system->log_file, "[%s] %s\n", time_str, message);
+        fflush(system->log_file);
+    }
+}
+
+void open_log_file(MailSystem *system, const char* filename) {
+    if (!system || !filename) {
+        return;
+    }
+
+    if (system->log_file) {
+        fclose(system->log_file);
+    }
+
+    system->log_file = fopen(filename, "w");
+    if (!system->log_file) {
+        printf("Error opening log file: %s\n", filename);
+        return;
+    }
+    log_message(system, "Mail system initialized");
+}
+
+StatusCode save_letters_to_file(MailSystem *system, const char* filename) {
+    if (!system || !filename) {
+        return ERROR_INVALID_ID;
+    }
+    
+    FILE *file = fopen(filename, "w");
+    if (!file) {
+        return ERROR_FILE_OPERATION;
+    }
+    
+    fprintf(file, "Total letters: %zu\n", system->letters_size);
+    for (size_t i = 0; i < system->letters_size; i++) {
+        const Letter *l = &system->letters[i];
+        fprintf(file, "Letter ID: %d, Type: %s, Status: %s, Priority: %d, From: %d, To: %d, Current: %d, Data: %s\n",
+                l->id,
+                l->type == REGULAR ? "Regular" : "Urgent",
+                l->state == IN_TRANSIT ? "In Transit" : 
+                 (l->state == DELIVERED ? "Delivered" : "Undelivered"),
+                l->priority,
+                l->from_office,
+                l->to_office,
+                l->current_office,
+                l->tech_data);
+    }
+    fclose(file);
+    
+    char log_msg[256];
+    sprintf(log_msg, "Letters listed to file: %s", filename);
+    log_message(system, log_msg);
+    return SUCCESS;
+}
