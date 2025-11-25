@@ -806,3 +806,25 @@ void print_system_status(MailSystem *system, int auto_transfer_enabled) {
     }
     printf("Letters in transit: %d, Delivered: %d, Undelivered: %d\n", in_transit, delivered, undelivered);
 }
+
+void sort_by_priority(int *ids, int *priorities, PostOffice **offices, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        for (size_t j = i + 1; j < count; j++) {
+            if (priorities[j] > priorities[i]) {
+                int temp_priority = priorities[i];
+                priorities[i] = priorities[j];
+                priorities[j] = temp_priority;
+                
+                int temp_id = ids[i];
+                ids[i] = ids[j];
+                ids[j] = temp_id;
+                
+                if (offices) {
+                    PostOffice *temp_office = offices[i];
+                    offices[i] = offices[j];
+                    offices[j] = temp_office;
+                }
+            }
+        }
+    }
+}
