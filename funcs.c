@@ -753,3 +753,56 @@ StatusCode save_letters_to_file(MailSystem *system, const char* filename) {
     log_message(system, log_msg);
     return SUCCESS;
 }
+
+void msleep(int milliseconds) {
+    clock_t start_time = clock();
+    while (clock() < start_time + milliseconds * (CLOCKS_PER_SEC / 1000));
+}
+
+void print_office_connections(MailSystem *system, int office_id) {
+    if (!system) return;
+    
+    PostOffice *office = find_office(system, office_id);
+    if (!office) {
+        printf("Office %d not found\n", office_id);
+        return;
+    }
+    
+    printf("Office connections %d: ", office_id);
+    if (office->num_connections == 0) {
+        printf("no connections\n");
+    } else {
+        for (int i = 0; i < office->num_connections; i++) {
+            printf("%d ", office->connections[i]);
+        }
+        printf("\n");
+    }
+}
+
+void print_system_status(MailSystem *system, int auto_transfer_enabled) {
+    if (!system) return;
+    
+    printf("\nSystem status\n");
+    printf("Delivery: %s\n", auto_transfer_enabled ? "on" : "off");
+    printf("Отделений: ");
+    
+    int office_count = 0;
+    PostOffice *office = system->offices;
+    while (office) {
+        printf("%d(%d letters) ", office->id, office->current_letters);
+        office = office->next;
+        office_count++;
+    }
+    printf("\nTotal number of offices: %d\n", office_count);
+    printf("Всего писем: %zu\n", system->letters_size);
+    
+    int in_transit = 0, delivered = 0, undelivered = 0;
+    for (size_t i = 0; i < system->letters_size; i++) {
+        switch (system->letters[i].state) {
+            case IN_TRANSIT: in_transit++; break;
+            case DELIVERED: delivered++; break;
+            case UNDELIVERED: undelivered++; break;
+        }
+    }
+    printf("Letters in transit: %d, Delivered: %d, Undelivered: %d\n", in_transit, delivered, undelivered);
+}

@@ -93,4 +93,9 @@ void log_message(MailSystem *system, const char* message);
 void open_log_file(MailSystem *system, const char* filename);
 StatusCode save_letters_to_file(MailSystem *system, const char* filename);
 
+void msleep(int milliseconds);
+void print_office_connections(MailSystem *system, int office_id);
+void print_system_status(MailSystem *system, int auto_transfer_enabled);
+void sort_by_priority(int *ids, int *priorities, PostOffice **offices, size_t count);
+
 #endif
