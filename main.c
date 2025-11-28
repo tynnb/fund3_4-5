@@ -12,9 +12,7 @@ static void print_menu(int auto_transfer_enabled) {
     printf("Select an option: ");
 }
 
-int main(int argc, char *argv[]) {
-    srand(time(NULL));
-    
+int main(int argc, char *argv[]) {    
     const char *log_file = "system_log.txt";
     int auto_transfer_enabled = 0;
     
